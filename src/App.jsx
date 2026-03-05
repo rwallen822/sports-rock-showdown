@@ -1,17 +1,17 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 const uid = () => Math.random().toString(36).slice(2);
 
 // 1960s MLB Classic Palette
 const C = {
-  cream:    "#F5F0E8",   // scorecard cream
-  parchment:"#EDE5D0",  // aged paper
-  navy:     "#1B3A6B",  // Dodger navy
-  red:      "#C41E3A",  // Cardinals red
-  forest:   "#1D5C2E",  // Athletics green
-  gold:     "#C8972B",  // Pirates gold
-  sky:      "#4A7FB5",  // mid-blue
-  brown:    "#5C3D1E",  // leather brown
+  cream:    "#F5F0E8",
+  parchment:"#EDE5D0",
+  navy:     "#1B3A6B",
+  red:      "#C41E3A",
+  forest:   "#1D5C2E",
+  gold:     "#C8972B",
+  sky:      "#4A7FB5",
+  brown:    "#5C3D1E",
   chalk:    "#FFFFFF",
   ink:      "#1A1A1A",
   steel:    "#6B7A8D",
@@ -39,18 +39,78 @@ function storageGet(key) {
   try {
     const r = localStorage.getItem(key);
     return r ? JSON.parse(r) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function storageSet(key, val) {
   try {
     localStorage.setItem(key, JSON.stringify(val));
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
+}
+
+// -- iTunes Search API --
+async function searchItunes(query, limit = 15) {
+  if (!query || query.length < 2) return [];
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=${limit}`;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    return (data.results || []).map(t => ({
+      trackId: t.trackId,
+      song: t.trackName,
+      artist: t.artistName,
+      album: t.collectionName,
+      year: t.releaseDate ? new Date(t.releaseDate).getFullYear().toString() : "",
+      artworkUrl: t.artworkUrl100?.replace("100x100", "200x200") || "",
+      artworkSmall: t.artworkUrl60 || "",
+      previewUrl: t.previewUrl || "",
+      appleMusicUrl: t.trackViewUrl || "",
+    }));
+  } catch { return []; }
+}
+
+function useDebounce(value, delay) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
+// -- Global audio player (singleton so only one preview plays at a time) --
+function useAudioPlayer() {
+  const audioRef = useRef(null);
+  const [playingUrl, setPlayingUrl] = useState(null);
+
+  const play = useCallback((url) => {
+    if (!url) return;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (playingUrl === url) {
+      setPlayingUrl(null);
+      return;
+    }
+    const a = new Audio(url);
+    a.onended = () => setPlayingUrl(null);
+    a.onerror = () => setPlayingUrl(null);
+    a.play();
+    audioRef.current = a;
+    setPlayingUrl(url);
+  }, [playingUrl]);
+
+  const stop = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    setPlayingUrl(null);
+  }, []);
+
+  return { playingUrl, play, stop };
 }
 
 export default function App() {
@@ -71,6 +131,7 @@ export default function App() {
   const [storageReady, setStorageReady] = useState(false);
   const [newSlotName, setNewSlotName] = useState("");
   const autoSaveTimer = useRef(null);
+  const audio = useAudioPlayer();
 
   useEffect(() => {
     const bank = storageGet(BANK_KEY);
@@ -157,6 +218,10 @@ export default function App() {
     setModal(null);
   };
 
+  const addMusicFromSearch = (track) => {
+    setMusicBank(b => [...b, { ...track, id: uid() }]);
+  };
+
   const handleDrop = (toQ, toIdx) => {
     if (!dragRef.current) return;
     const { source, item, fromQ, fromIdx } = dragRef.current;
@@ -207,6 +272,7 @@ export default function App() {
         input::placeholder, textarea::placeholder { color: #B0A898; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
         .tab-btn { transition: background .15s, color .15s; }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
 
       {/* HEADER */}
@@ -301,13 +367,14 @@ export default function App() {
             onAdd={() => { setFormData({}); setModal({ type: "addSport" }); }}
             onEdit={item => { setFormData({ ...item }); setModal({ type: "editSport" }); }}
             onDelete={id => setSportsBank(b => b.filter(x => x.id !== id))}
-            onDragStart={item => { dragRef.current = { source: "sport", item }; }} />
+            onDragStart={item => { dragRef.current = { source: "sport", item }; }}
+            audio={audio} />
           <BankCol title="🎵 Music" color={C.red} accent={C.ltred} items={musicBank} type="music"
             onAdd={() => { setFormData({}); setModal({ type: "addMusic" }); }}
             onEdit={item => { setFormData({ ...item }); setModal({ type: "editMusic" }); }}
             onDelete={id => setMusicBank(b => b.filter(x => x.id !== id))}
             onDragStart={item => { dragRef.current = { source: "music", item }; }}
-            borderLeft />
+            borderLeft audio={audio} />
         </div>
       )}
 
@@ -319,6 +386,7 @@ export default function App() {
               <QuarterBlock key={qId} qId={qId} items={quarters[qId]} players={players} scores={scores}
                 toggleMark={toggleMark} calcScore={calcScore} scoreColor={scoreColor}
                 dragRef={dragRef} dragOver={dragOver} setDragOver={setDragOver} handleDrop={handleDrop}
+                audio={audio}
                 onRemove={idx => {
                   setQuarters(prev => { const n = { ...prev, [qId]: [...prev[qId]] }; n[qId].splice(idx, 1); return n; });
                 }} />
@@ -326,16 +394,16 @@ export default function App() {
           </div>
           <div style={{ width: 270, borderLeft: `3px solid ${C.parchment}`, background: C.cream, overflowY: "auto" }}>
             <Scoreboard players={players} getTotal={getTotal} totalPoss={totalPoss} scores={scores} quarters={quarters} calcScore={calcScore} />
-            <MiniBank label="🏆 Sports" color={C.navy} bg={C.ltblue} items={sportsBank} onDragStart={item => { dragRef.current = { source: "sport", item }; }} />
-            <MiniBank label="🎵 Music" color={C.red} bg={C.ltred} items={musicBank} onDragStart={item => { dragRef.current = { source: "music", item }; }} />
+            <MiniBank label="🏆 Sports" color={C.navy} bg={C.ltblue} items={sportsBank} onDragStart={item => { dragRef.current = { source: "sport", item }; }} audio={audio} />
+            <MiniBank label="🎵 Music" color={C.red} bg={C.ltred} items={musicBank} onDragStart={item => { dragRef.current = { source: "music", item }; }} audio={audio} />
           </div>
         </div>
       )}
 
       {/* MODALS */}
       {modal && (
-        <div onClick={() => setModal(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: C.chalk, borderRadius: 14, padding: 28, width: "min(540px,95vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,0.25)", border: `3px solid ${C.navy}` }}>
+        <div onClick={() => { setModal(null); audio.stop(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: C.chalk, borderRadius: 14, padding: 28, width: "min(600px,95vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,0.25)", border: `3px solid ${C.navy}` }}>
 
             {modal.type === "saves" && (
               <SavesModal saveSlots={saveSlots} loadSlot={loadSlot} deleteSlot={deleteSlot}
@@ -369,12 +437,30 @@ export default function App() {
               </div>
             )}
 
-            {(modal.type === "addMusic" || modal.type === "editMusic") && (
+            {modal.type === "addMusic" && (
+              <MusicSearchModal
+                onAdd={addMusicFromSearch}
+                onClose={() => setModal(null)}
+                audio={audio}
+              />
+            )}
+
+            {modal.type === "editMusic" && (
               <div>
-                <SectionHead color={C.red}>{modal.type === "editMusic" ? "Edit" : "Add"} Music</SectionHead>
+                <SectionHead color={C.red}>Edit Music</SectionHead>
+                {formData.artworkUrl && (
+                  <div style={{ display: "flex", gap: 14, marginBottom: 16 }}>
+                    <img src={formData.artworkUrl} alt="" style={{ width: 80, height: 80, borderRadius: 8, objectFit: "cover" }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: C.ink, fontStyle: "italic" }}>{formData.song}</div>
+                      <div style={{ fontSize: 13, color: C.red, fontWeight: 700 }}>{formData.artist}</div>
+                      <div style={{ fontSize: 12, color: C.brown }}>{formData.album} ({formData.year})</div>
+                    </div>
+                  </div>
+                )}
                 <FField label="Song Title" val={formData.song || ""} set={v => setFormData({ ...formData, song: v })} ph="Song name…" />
                 <FField label="Artist" val={formData.artist || ""} set={v => setFormData({ ...formData, artist: v })} ph="Artist / band name…" />
-                <FField label="Billboard Hot 100 Debut Year" val={formData.year || ""} set={v => setFormData({ ...formData, year: v })} ph="e.g. 1994" />
+                <FField label="Year" val={formData.year || ""} set={v => setFormData({ ...formData, year: v })} ph="e.g. 1994" />
                 <FField label="Notes" val={formData.notes || ""} set={v => setFormData({ ...formData, notes: v })} ph="Chart peak, context…" />
                 <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
                   <Btn onClick={() => setModal(null)} v="ghost">Cancel</Btn>
@@ -386,6 +472,141 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+// -- Music Search Modal (iTunes) --
+function MusicSearchModal({ onAdd, onClose, audio }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [added, setAdded] = useState(new Set());
+  const debouncedQuery = useDebounce(query, 400);
+
+  useEffect(() => {
+    if (!debouncedQuery || debouncedQuery.length < 2) { setResults([]); return; }
+    let cancelled = false;
+    setLoading(true);
+    searchItunes(debouncedQuery).then(r => {
+      if (!cancelled) { setResults(r); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [debouncedQuery]);
+
+  const handleAdd = (track) => {
+    onAdd(track);
+    setAdded(s => new Set([...s, track.trackId]));
+  };
+
+  return (
+    <div>
+      <SectionHead color={C.red}>🎵 Add Music from Apple Music</SectionHead>
+      <div style={{ position: "relative", marginBottom: 16 }}>
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search songs, artists, albums…"
+          autoFocus
+          style={{ ...IS, width: "100%", fontSize: 15, fontWeight: 600, paddingRight: 40 }}
+        />
+        {loading && (
+          <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", width: 18, height: 18, border: `2px solid ${C.parchment}`, borderTopColor: C.red, borderRadius: "50%", animation: "spin .6s linear infinite" }} />
+        )}
+      </div>
+
+      {results.length === 0 && !loading && query.length >= 2 && (
+        <div style={{ textAlign: "center", padding: "24px 0", color: C.steel, fontSize: 13, fontWeight: 600 }}>No results found</div>
+      )}
+      {results.length === 0 && query.length < 2 && (
+        <div style={{ textAlign: "center", padding: "24px 0", color: C.steel, fontSize: 13, fontWeight: 600 }}>
+          Type a song name, artist, or album to search Apple Music
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 420, overflowY: "auto" }}>
+        {results.map(track => {
+          const isAdded = added.has(track.trackId);
+          const isPlaying = audio.playingUrl === track.previewUrl;
+          return (
+            <div key={track.trackId} style={{ display: "flex", gap: 10, alignItems: "center", background: isAdded ? C.ltgreen : C.parchment, border: `2px solid ${isAdded ? C.forest : "#CCC0A8"}`, borderRadius: 8, padding: "8px 10px", transition: "background .15s" }}>
+              <div style={{ position: "relative", width: 50, height: 50, flexShrink: 0 }}>
+                {track.artworkUrl ? (
+                  <img src={track.artworkUrl} alt="" style={{ width: 50, height: 50, borderRadius: 6, objectFit: "cover" }} />
+                ) : (
+                  <div style={{ width: 50, height: 50, borderRadius: 6, background: C.ltred, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🎵</div>
+                )}
+                {track.previewUrl && (
+                  <button onClick={() => audio.play(track.previewUrl)} style={{
+                    position: "absolute", inset: 0, background: isPlaying ? "rgba(196,30,58,0.85)" : "rgba(0,0,0,0.4)",
+                    border: "none", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                    opacity: isPlaying ? 1 : 0, transition: "opacity .15s",
+                    color: C.chalk, fontSize: 18,
+                  }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => { if (!isPlaying) e.currentTarget.style.opacity = 0; }}>
+                    {isPlaying ? "⏸" : "▶"}
+                  </button>
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.song}</div>
+                <div style={{ fontSize: 11, color: C.red, fontWeight: 700 }}>{track.artist}</div>
+                <div style={{ fontSize: 10, color: C.steel, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.album} · {track.year}</div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                <button onClick={() => handleAdd(track)} disabled={isAdded} className={isAdded ? "" : "hov"} style={{
+                  background: isAdded ? C.forest : C.red, color: C.chalk, border: "none", borderRadius: 5,
+                  padding: "4px 10px", cursor: isAdded ? "default" : "pointer", fontSize: 10, fontWeight: 800,
+                  fontFamily: "'Nunito',sans-serif", opacity: isAdded ? 0.7 : 1,
+                }}>
+                  {isAdded ? "✓ Added" : "+ Add"}
+                </button>
+                {track.appleMusicUrl && (
+                  <AppleMusicLink url={track.appleMusicUrl} small />
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", marginTop: 18 }}>
+        <div style={{ fontSize: 10, color: C.steel, fontWeight: 600 }}>
+          Powered by iTunes Search API · 30s previews
+        </div>
+        <Btn onClick={() => { audio.stop(); onClose(); }} v="ghost">Done</Btn>
+      </div>
+    </div>
+  );
+}
+
+// -- Apple Music Link Button --
+function AppleMusicLink({ url, small }) {
+  if (!url) return null;
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="hov" style={{
+      display: "inline-flex", alignItems: "center", gap: 3,
+      background: "#FC3C44", color: C.chalk, borderRadius: small ? 4 : 5,
+      padding: small ? "2px 7px" : "3px 9px", textDecoration: "none",
+      fontSize: small ? 9 : 10, fontWeight: 800, fontFamily: "'Nunito',sans-serif",
+      letterSpacing: 0.3, lineHeight: 1.4,
+    }}>
+      ♫ Apple Music
+    </a>
+  );
+}
+
+// -- Preview Play Button (inline, for cards) --
+function PreviewBtn({ url, audio, size = 22 }) {
+  if (!url) return null;
+  const isPlaying = audio.playingUrl === url;
+  return (
+    <button onClick={(e) => { e.stopPropagation(); audio.play(url); }} className="hov" style={{
+      width: size, height: size, borderRadius: "50%", border: "none",
+      background: isPlaying ? C.red : C.navy, color: C.chalk,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      cursor: "pointer", fontSize: size * 0.45, flexShrink: 0, padding: 0,
+    }}>
+      {isPlaying ? "⏸" : "▶"}
+    </button>
   );
 }
 
@@ -447,7 +668,7 @@ function SavesModal({ saveSlots, loadSlot, deleteSlot, startNewGame, currentSlot
 }
 
 // -- Bank Column --
-function BankCol({ title, color, accent, items, type, onAdd, onEdit, onDelete, onDragStart, borderLeft }) {
+function BankCol({ title, color, accent, items, type, onAdd, onEdit, onDelete, onDragStart, borderLeft, audio }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", borderLeft: borderLeft ? `3px solid ${C.parchment}` : "none", background: C.cream }}>
       <div style={{ padding: "14px 18px 12px", borderBottom: `3px solid ${color}`, background: color, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -463,21 +684,30 @@ function BankCol({ title, color, accent, items, type, onAdd, onEdit, onDelete, o
           <div key={item.id} draggable onDragStart={() => onDragStart(item)} className="hov"
             style={{ background: C.chalk, border: `2px solid ${color}`, borderLeft: `5px solid ${color}`, borderRadius: 8, padding: "10px 12px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <div style={{ flex: 1 }}>
-                {type === "sport" ? (
-                  <>
-                    {item.sport && <div style={{ fontSize: 10, color: C.gold, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 3 }}>{item.sport}</div>}
-                    <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.4, marginBottom: 4, fontWeight: 600 }}>{item.question || "—"}</div>
-                    <div style={{ fontSize: 11, color: C.forest, fontWeight: 700 }}>✓ {item.answer || "—"}</div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ fontSize: 13, color: C.ink, marginBottom: 2, fontWeight: 700, fontStyle: "italic" }}>{item.song || "—"}</div>
-                    <div style={{ fontSize: 12, color: C.red, fontWeight: 700 }}>🎤 {item.artist || "—"}</div>
-                    <div style={{ fontSize: 11, color: C.brown, fontWeight: 600 }}>📅 {item.year || "—"}</div>
-                  </>
+              <div style={{ display: "flex", gap: 10, flex: 1, minWidth: 0 }}>
+                {type === "music" && item.artworkSmall && (
+                  <img src={item.artworkSmall} alt="" style={{ width: 42, height: 42, borderRadius: 5, objectFit: "cover", flexShrink: 0 }} />
                 )}
-                {item.notes && <div style={{ fontSize: 10, color: C.steel, marginTop: 4, fontStyle: "italic" }}>{item.notes}</div>}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {type === "sport" ? (
+                    <>
+                      {item.sport && <div style={{ fontSize: 10, color: C.gold, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 3 }}>{item.sport}</div>}
+                      <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.4, marginBottom: 4, fontWeight: 600 }}>{item.question || "—"}</div>
+                      <div style={{ fontSize: 11, color: C.forest, fontWeight: 700 }}>✓ {item.answer || "—"}</div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 13, color: C.ink, marginBottom: 2, fontWeight: 700, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.song || "—"}</div>
+                      <div style={{ fontSize: 12, color: C.red, fontWeight: 700 }}>🎤 {item.artist || "—"}</div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
+                        <span style={{ fontSize: 11, color: C.brown, fontWeight: 600 }}>📅 {item.year || "—"}</span>
+                        <PreviewBtn url={item.previewUrl} audio={audio} size={20} />
+                        <AppleMusicLink url={item.appleMusicUrl} small />
+                      </div>
+                    </>
+                  )}
+                  {item.notes && <div style={{ fontSize: 10, color: C.steel, marginTop: 4, fontStyle: "italic" }}>{item.notes}</div>}
+                </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <SmBtn onClick={() => onEdit(item)}>✏️</SmBtn>
@@ -499,7 +729,7 @@ const QColors = {
   4: { bg: C.gold,  lt: C.ltgold,  label: "4th Quarter" },
 };
 
-function QuarterBlock({ qId, items, players, scores, toggleMark, calcScore, scoreColor, dragRef, dragOver, setDragOver, handleDrop, onRemove }) {
+function QuarterBlock({ qId, items, players, scores, toggleMark, calcScore, scoreColor, dragRef, dragOver, setDragOver, handleDrop, onRemove, audio }) {
   const qc = QColors[qId];
   const isOver = dragOver === `zone_${qId}`;
   return (
@@ -515,7 +745,7 @@ function QuarterBlock({ qId, items, players, scores, toggleMark, calcScore, scor
         {items.map((item, idx) => (
           <GameCard key={`${item.id}_${idx}`} item={item} idx={idx} qId={qId} qc={qc} players={players} scores={scores}
             toggleMark={toggleMark} calcScore={calcScore} scoreColor={scoreColor}
-            dragRef={dragRef} dragOver={dragOver} setDragOver={setDragOver} handleDrop={handleDrop} onRemove={() => onRemove(idx)} />
+            dragRef={dragRef} dragOver={dragOver} setDragOver={setDragOver} handleDrop={handleDrop} onRemove={() => onRemove(idx)} audio={audio} />
         ))}
       </div>
     </div>
@@ -523,7 +753,7 @@ function QuarterBlock({ qId, items, players, scores, toggleMark, calcScore, scor
 }
 
 // -- Game Card --
-function GameCard({ item, idx, qId, qc, players, scores, toggleMark, calcScore, scoreColor, dragRef, dragOver, setDragOver, handleDrop, onRemove }) {
+function GameCard({ item, idx, qId, qc, players, scores, toggleMark, calcScore, scoreColor, dragRef, dragOver, setDragOver, handleDrop, onRemove, audio }) {
   const isSport = item.bankType === "sport";
   const isOver = dragOver === `card_${qId}_${idx}`;
   const typeColor = isSport ? C.navy : C.red;
@@ -540,22 +770,31 @@ function GameCard({ item, idx, qId, qc, players, scores, toggleMark, calcScore, 
           <span style={{ fontSize: 10, fontWeight: 800, color: typeColor, letterSpacing: 0.5, textTransform: "uppercase" }}>{isSport ? "🏆 Sport" : "🎵 Music"}</span>
           <span style={{ fontSize: 10, color: C.steel, fontWeight: 600 }}>#{idx + 1}</span>
         </div>
-        <button onClick={onRemove} className="hov" style={{ background: "none", border: "none", color: C.steel, cursor: "pointer", fontSize: 12, padding: "1px 4px", fontWeight: 700 }}>✕</button>
+        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+          {!isSport && item.previewUrl && <PreviewBtn url={item.previewUrl} audio={audio} size={20} />}
+          {!isSport && item.appleMusicUrl && <AppleMusicLink url={item.appleMusicUrl} small />}
+          <button onClick={onRemove} className="hov" style={{ background: "none", border: "none", color: C.steel, cursor: "pointer", fontSize: 12, padding: "1px 4px", fontWeight: 700 }}>✕</button>
+        </div>
       </div>
-      <div style={{ padding: "8px 10px" }}>
-        {isSport ? (
-          <>
-            {item.sport && <div style={{ fontSize: 9, color: C.gold, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 2 }}>{item.sport}</div>}
-            <div style={{ fontSize: 12, color: C.ink, lineHeight: 1.4, marginBottom: 2, fontWeight: 600 }}>{item.question || "—"}</div>
-            <div style={{ fontSize: 11, color: C.forest, fontWeight: 700 }}>✓ {item.answer || "—"}</div>
-          </>
-        ) : (
-          <>
-            <div style={{ fontSize: 12, color: C.ink, fontWeight: 700, fontStyle: "italic", marginBottom: 1 }}>{item.song || "—"}</div>
-            <div style={{ fontSize: 11, color: C.red, fontWeight: 700 }}>🎤 {item.artist || "—"}</div>
-            <div style={{ fontSize: 11, color: C.brown, fontWeight: 600 }}>📅 {item.year || "—"}</div>
-          </>
+      <div style={{ padding: "8px 10px", display: "flex", gap: 8 }}>
+        {!isSport && item.artworkSmall && (
+          <img src={item.artworkSmall} alt="" style={{ width: 38, height: 38, borderRadius: 5, objectFit: "cover", flexShrink: 0 }} />
         )}
+        <div style={{ flex: 1 }}>
+          {isSport ? (
+            <>
+              {item.sport && <div style={{ fontSize: 9, color: C.gold, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 2 }}>{item.sport}</div>}
+              <div style={{ fontSize: 12, color: C.ink, lineHeight: 1.4, marginBottom: 2, fontWeight: 600 }}>{item.question || "—"}</div>
+              <div style={{ fontSize: 11, color: C.forest, fontWeight: 700 }}>✓ {item.answer || "—"}</div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 12, color: C.ink, fontWeight: 700, fontStyle: "italic", marginBottom: 1 }}>{item.song || "—"}</div>
+              <div style={{ fontSize: 11, color: C.red, fontWeight: 700 }}>🎤 {item.artist || "—"}</div>
+              <div style={{ fontSize: 11, color: C.brown, fontWeight: 600 }}>📅 {item.year || "—"}</div>
+            </>
+          )}
+        </div>
       </div>
       {players.length > 0 && (
         <div style={{ borderTop: `1px solid ${C.parchment}`, padding: "6px 10px", display: "flex", flexDirection: "column", gap: 5, background: "#FAFAF6" }}>
@@ -636,15 +875,21 @@ function Scoreboard({ players, getTotal, totalPoss, scores, quarters, calcScore 
 }
 
 // -- Mini Bank --
-function MiniBank({ label, color, bg, items, onDragStart }) {
+function MiniBank({ label, color, bg, items, onDragStart, audio }) {
   return (
     <div style={{ padding: "12px 13px", borderBottom: `2px solid ${C.parchment}` }}>
       <div style={{ fontSize: 11, color, fontWeight: 800, letterSpacing: 0.5, marginBottom: 7 }}>{label} ({items.length}) — drag to board</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         {items.slice(0, 5).map(item => (
           <div key={item.id} draggable onDragStart={() => onDragStart(item)} className="hov"
-            style={{ background: bg, border: `1px solid ${color}`, borderRadius: 5, padding: "5px 9px", cursor: "grab", fontSize: 10, color: C.ink, fontWeight: 600, lineHeight: 1.3 }}>
-            {label.includes("Sport") ? (item.question?.slice(0, 44) || "…") : `${item.artist || "?"} — ${item.song?.slice(0, 24) || "?"}`}
+            style={{ background: bg, border: `1px solid ${color}`, borderRadius: 5, padding: "5px 9px", cursor: "grab", fontSize: 10, color: C.ink, fontWeight: 600, lineHeight: 1.3, display: "flex", alignItems: "center", gap: 6 }}>
+            {label.includes("Music") && item.artworkSmall && (
+              <img src={item.artworkSmall} alt="" style={{ width: 24, height: 24, borderRadius: 3, objectFit: "cover", flexShrink: 0 }} />
+            )}
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {label.includes("Sport") ? (item.question?.slice(0, 44) || "…") : `${item.artist || "?"} — ${item.song?.slice(0, 24) || "?"}`}
+            </span>
+            {label.includes("Music") && item.previewUrl && <PreviewBtn url={item.previewUrl} audio={audio} size={18} />}
           </div>
         ))}
         {items.length === 0 && <div style={{ fontSize: 11, color: C.steel, fontWeight: 600 }}>None — add in Bank tab</div>}
