@@ -1,0 +1,722 @@
+import { useState, useRef, useEffect } from "react";
+
+const uid = () => Math.random().toString(36).slice(2);
+
+// 1960s MLB Classic Palette
+const C = {
+  cream:    "#F5F0E8",   // scorecard cream
+  parchment:"#EDE5D0",  // aged paper
+  navy:     "#1B3A6B",  // Dodger navy
+  red:      "#C41E3A",  // Cardinals red
+  forest:   "#1D5C2E",  // Athletics green
+  gold:     "#C8972B",  // Pirates gold
+  sky:      "#4A7FB5",  // mid-blue
+  brown:    "#5C3D1E",  // leather brown
+  chalk:    "#FFFFFF",
+  ink:      "#1A1A1A",
+  steel:    "#6B7A8D",
+  ltblue:   "#D6E4F0",
+  ltred:    "#F5DDE0",
+  ltgreen:  "#D6EBD9",
+  ltgold:   "#FAF0D6",
+  ltnav:    "#D6DFF0",
+};
+
+const PLAYER_COLORS = [C.navy, C.red, C.forest, C.gold, C.brown, C.sky, "#7B3FA0", "#2A8C6E"];
+const BANK_KEY = "srs_bank_v1";
+const SAVES_KEY = "srs_saves_v1";
+
+const calcScore = (marks) => {
+  if (!marks) return 0;
+  const { sport, artist, yearExact, yearClose } = marks;
+  const pts = (sport?1:0)+(artist?1:0)+(yearExact?1:yearClose?1:0);
+  return pts + (sport&&artist&&yearExact?1:0);
+};
+
+const scoreColor = (s) => s===4?C.gold:s===3?C.forest:s===2?C.navy:s===1?C.steel:C.parchment;
+
+function storageGet(key) {
+  try {
+    const r = localStorage.getItem(key);
+    return r ? JSON.parse(r) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key, val) {
+  try {
+    localStorage.setItem(key, JSON.stringify(val));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export default function App() {
+  const [view, setView] = useState("setup");
+  const [players, setPlayers] = useState([]);
+  const [newName, setNewName] = useState("");
+  const [quarters, setQuarters] = useState({1:[],2:[],3:[],4:[]});
+  const [sportsBank, setSportsBank] = useState([]);
+  const [musicBank, setMusicBank] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [formData, setFormData] = useState({});
+  const [scores, setScores] = useState({});
+  const [dragOver, setDragOver] = useState(null);
+  const dragRef = useRef(null);
+  const [saveSlots, setSaveSlots] = useState({});
+  const [saveStatus, setSaveStatus] = useState("");
+  const [currentSlot, setCurrentSlot] = useState(null);
+  const [storageReady, setStorageReady] = useState(false);
+  const [newSlotName, setNewSlotName] = useState("");
+  const autoSaveTimer = useRef(null);
+
+  useEffect(() => {
+    const bank = storageGet(BANK_KEY);
+    if (bank) {
+      if (bank.sports) setSportsBank(bank.sports);
+      if (bank.music) setMusicBank(bank.music);
+    }
+    const saves = storageGet(SAVES_KEY);
+    if (saves) setSaveSlots(saves);
+    setStorageReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    storageSet(BANK_KEY, { sports: sportsBank, music: musicBank });
+  }, [sportsBank, musicBank, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady || !currentSlot) return;
+    clearTimeout(autoSaveTimer.current);
+    setSaveStatus("saving");
+    autoSaveTimer.current = setTimeout(() => {
+      const gameState = { players, quarters, scores, name: currentSlot, savedAt: new Date().toISOString() };
+      const updated = { ...saveSlots, [currentSlot]: gameState };
+      setSaveSlots(updated);
+      storageSet(SAVES_KEY, updated);
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus(""), 2500);
+    }, 1200);
+  }, [players, quarters, scores]);
+
+  const saveToSlot = (name) => {
+    setSaveStatus("saving");
+    const gameState = { players, quarters, scores, name, savedAt: new Date().toISOString() };
+    const updated = { ...saveSlots, [name]: gameState };
+    setSaveSlots(updated);
+    storageSet(SAVES_KEY, updated);
+    setCurrentSlot(name);
+    setSaveStatus("saved");
+    setTimeout(() => setSaveStatus(""), 2500);
+  };
+
+  const loadSlot = (name) => {
+    const s = saveSlots[name];
+    if (!s) return;
+    setPlayers(s.players || []);
+    setQuarters(s.quarters || {1:[],2:[],3:[],4:[]});
+    setScores(s.scores || {});
+    setCurrentSlot(name);
+    setModal(null);
+    setView("game");
+  };
+
+  const deleteSlot = (name) => {
+    const updated = { ...saveSlots };
+    delete updated[name];
+    setSaveSlots(updated);
+    storageSet(SAVES_KEY, updated);
+    if (currentSlot === name) setCurrentSlot(null);
+  };
+
+  const startNewGame = (name) => {
+    if (!name.trim()) return;
+    setCurrentSlot(name.trim());
+    setScores({});
+    setQuarters({1:[],2:[],3:[],4:[]});
+    setModal(null);
+    setView("game");
+  };
+
+  const addPlayer = () => {
+    const n = newName.trim();
+    if (!n) return;
+    setPlayers(p => [...p, { id: uid(), name: n, color: PLAYER_COLORS[p.length % PLAYER_COLORS.length] }]);
+    setNewName("");
+  };
+
+  const saveItem = () => {
+    const isSport = modal.type === "addSport" || modal.type === "editSport";
+    const isEdit = modal.type === "editSport" || modal.type === "editMusic";
+    const setter = isSport ? setSportsBank : setMusicBank;
+    if (isEdit) setter(b => b.map(x => x.id === formData.id ? { ...formData } : x));
+    else setter(b => [...b, { ...formData, id: uid() }]);
+    setModal(null);
+  };
+
+  const handleDrop = (toQ, toIdx) => {
+    if (!dragRef.current) return;
+    const { source, item, fromQ, fromIdx } = dragRef.current;
+    setQuarters(prev => {
+      const next = { 1:[...prev[1]], 2:[...prev[2]], 3:[...prev[3]], 4:[...prev[4]] };
+      if (source === "quarter") {
+        next[fromQ].splice(fromIdx, 1);
+        next[toQ].splice(toIdx, 0, item);
+      } else {
+        const ins = toIdx !== undefined ? toIdx : next[toQ].length;
+        next[toQ].splice(ins, 0, { ...item, bankType: source });
+      }
+      return next;
+    });
+    setDragOver(null);
+    dragRef.current = null;
+  };
+
+  const toggleMark = (pid, qId, idx, field) => {
+    const key = `${qId}_${idx}`;
+    setScores(prev => {
+      const pm = { ...(prev[pid] || {}) };
+      const qm = { ...(pm[key] || {}) };
+      if (field === "year") {
+        if (!qm.yearClose && !qm.yearExact) { qm.yearClose = true; qm.yearExact = false; }
+        else if (qm.yearClose && !qm.yearExact) { qm.yearClose = false; qm.yearExact = true; }
+        else { qm.yearClose = false; qm.yearExact = false; }
+      } else { qm[field] = !qm[field]; }
+      pm[key] = qm;
+      return { ...prev, [pid]: pm };
+    });
+  };
+
+  const getTotal = (pid) => Object.values(scores[pid] || {}).reduce((s, m) => s + calcScore(m), 0);
+  const totalPoss = [1,2,3,4].flatMap(q => quarters[q]).length * 4;
+  const slotCount = Object.keys(saveSlots).length;
+
+  return (
+    <div style={{ fontFamily: "'Nunito', sans-serif", background: C.cream, minHeight: "100vh", color: C.ink }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: ${C.parchment}; }
+        ::-webkit-scrollbar-thumb { background: ${C.steel}; border-radius: 3px; }
+        .hov:hover { filter: brightness(0.93); cursor: pointer; transition: filter .15s; }
+        input, textarea, select { font-family: 'Nunito', sans-serif; outline: none; }
+        input::placeholder, textarea::placeholder { color: #B0A898; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        .tab-btn { transition: background .15s, color .15s; }
+      `}</style>
+
+      {/* HEADER */}
+      <div style={{ background: C.navy, borderBottom: `4px solid ${C.gold}`, padding: "0 24px", display: "flex", alignItems: "center", gap: 0, flexWrap: "wrap" }}>
+        <div style={{ fontFamily: "'Nunito', sans-serif", fontWeight: 900, fontSize: 20, color: C.gold, letterSpacing: 2, marginRight: 24, padding: "14px 0", textTransform: "uppercase", whiteSpace: "nowrap" }}>
+          ⚡ Sports Rock Showdown
+        </div>
+
+        {[["setup","👥 Players"],["game","🎮 Game"],["bank","📦 Bank"]].map(([v, label]) => (
+          <button key={v} className="tab-btn" onClick={() => setView(v)} style={{
+            background: view === v ? C.gold : "transparent",
+            border: "none",
+            color: view === v ? C.navy : "#A8BCD4",
+            padding: "14px 18px", cursor: "pointer", fontSize: 13, fontWeight: 700,
+            fontFamily: "'Nunito',sans-serif", letterSpacing: 0.5,
+          }}>
+            {label}
+          </button>
+        ))}
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginLeft: 16 }}>
+          <button onClick={() => setModal({ type: "saves" })} className="hov" style={{ background: "#2A5298", border: "1px solid #4A72B8", color: "#A8BCD4", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Nunito',sans-serif" }}>
+            💾 {slotCount > 0 ? `${slotCount} Save${slotCount !== 1 ? "s" : ""}` : "Saves"}
+          </button>
+          {currentSlot && (
+            <button onClick={() => saveToSlot(currentSlot)} className="hov" style={{ background: "#1D5C2E", border: "1px solid #2E7A40", color: "#7ED4A0", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "'Nunito',sans-serif" }}>
+              💾 Save
+            </button>
+          )}
+          {saveStatus && (
+            <span style={{ fontSize: 11, fontWeight: 700, color: saveStatus === "saving" ? C.gold : "#7ED4A0", animation: saveStatus === "saving" ? "pulse 1s infinite" : "none" }}>
+              {saveStatus === "saving" ? "Saving…" : "✓ Saved"}
+            </span>
+          )}
+          {currentSlot && <span style={{ fontSize: 10, color: "#6A8AB0", fontWeight: 600 }}>{currentSlot}</span>}
+        </div>
+
+        <div style={{ marginLeft: "auto", display: "flex", gap: 18, alignItems: "center", paddingRight: 4 }}>
+          {players.map(p => (
+            <div key={p.id} style={{ textAlign: "center" }}>
+              <div style={{ fontWeight: 900, fontSize: 20, color: p.color === C.navy ? C.gold : p.color === C.cream ? C.ink : C.cream, lineHeight: 1 }}>{getTotal(p.id)}</div>
+              <div style={{ fontSize: 9, color: "#7A9ABE", fontWeight: 700, letterSpacing: 1, maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name.toUpperCase()}</div>
+            </div>
+          ))}
+          {players.length > 0 && <div style={{ fontSize: 10, color: "#5A7A9A", fontWeight: 600 }}>/{totalPoss}</div>}
+        </div>
+      </div>
+
+      {/* SETUP */}
+      {view === "setup" && (
+        <div style={{ maxWidth: 520, margin: "48px auto", padding: "0 20px" }}>
+          <div style={{ textAlign: "center", marginBottom: 36 }}>
+            <div style={{ background: C.navy, color: C.gold, display: "inline-block", padding: "8px 32px", borderRadius: 4, marginBottom: 10 }}>
+              <div style={{ fontWeight: 900, fontSize: 36, letterSpacing: 3, textTransform: "uppercase", lineHeight: 1 }}>Players</div>
+            </div>
+            <div style={{ fontSize: 12, color: C.steel, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>Add contestants to get started</div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginBottom: 22 }}>
+            <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer()} placeholder="Player name…"
+              style={{ ...IS, flex: 1, fontSize: 15, fontWeight: 600 }} />
+            <Btn onClick={addPlayer} v="navy">+ Add</Btn>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
+            {players.map((p, i) => (
+              <div key={p.id} style={{ background: C.chalk, border: `2px solid ${p.color}`, borderRadius: 10, padding: "11px 15px", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 2px 6px rgba(0,0,0,0.08)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: "50%", background: p.color, display: "flex", alignItems: "center", justifyContent: "center", color: p.color === C.gold ? C.navy : C.cream, fontWeight: 900, fontSize: 16 }}>{i + 1}</div>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: C.ink }}>{p.name}</span>
+                </div>
+                <button onClick={() => setPlayers(pl => pl.filter(x => x.id !== p.id))} className="hov" style={{ background: C.ltred, border: `1px solid ${C.red}`, color: C.red, borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>✕</button>
+              </div>
+            ))}
+          </div>
+
+          {players.length >= 2 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }}>
+              <Btn onClick={() => { setCurrentSlot(null); setView("game"); }} v="navy" lg>🎮 Open Game Board →</Btn>
+              <Btn onClick={() => setModal({ type: "newGame" })} v="ghost">📁 Save to a named slot first</Btn>
+            </div>
+          ) : (
+            <div style={{ textAlign: "center", fontSize: 12, color: C.steel, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>Add at least 2 players</div>
+          )}
+        </div>
+      )}
+
+      {/* BANK */}
+      {view === "bank" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", height: "calc(100vh - 58px)" }}>
+          <BankCol title="🏆 Sports Questions" color={C.navy} accent={C.ltblue} items={sportsBank} type="sport"
+            onAdd={() => { setFormData({}); setModal({ type: "addSport" }); }}
+            onEdit={item => { setFormData({ ...item }); setModal({ type: "editSport" }); }}
+            onDelete={id => setSportsBank(b => b.filter(x => x.id !== id))}
+            onDragStart={item => { dragRef.current = { source: "sport", item }; }} />
+          <BankCol title="🎵 Music" color={C.red} accent={C.ltred} items={musicBank} type="music"
+            onAdd={() => { setFormData({}); setModal({ type: "addMusic" }); }}
+            onEdit={item => { setFormData({ ...item }); setModal({ type: "editMusic" }); }}
+            onDelete={id => setMusicBank(b => b.filter(x => x.id !== id))}
+            onDragStart={item => { dragRef.current = { source: "music", item }; }}
+            borderLeft />
+        </div>
+      )}
+
+      {/* GAME */}
+      {view === "game" && (
+        <div style={{ display: "flex", height: "calc(100vh - 58px)" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+            {[1,2,3,4].map(qId => (
+              <QuarterBlock key={qId} qId={qId} items={quarters[qId]} players={players} scores={scores}
+                toggleMark={toggleMark} calcScore={calcScore} scoreColor={scoreColor}
+                dragRef={dragRef} dragOver={dragOver} setDragOver={setDragOver} handleDrop={handleDrop}
+                onRemove={idx => {
+                  setQuarters(prev => { const n = { ...prev, [qId]: [...prev[qId]] }; n[qId].splice(idx, 1); return n; });
+                }} />
+            ))}
+          </div>
+          <div style={{ width: 270, borderLeft: `3px solid ${C.parchment}`, background: C.cream, overflowY: "auto" }}>
+            <Scoreboard players={players} getTotal={getTotal} totalPoss={totalPoss} scores={scores} quarters={quarters} calcScore={calcScore} />
+            <MiniBank label="🏆 Sports" color={C.navy} bg={C.ltblue} items={sportsBank} onDragStart={item => { dragRef.current = { source: "sport", item }; }} />
+            <MiniBank label="🎵 Music" color={C.red} bg={C.ltred} items={musicBank} onDragStart={item => { dragRef.current = { source: "music", item }; }} />
+          </div>
+        </div>
+      )}
+
+      {/* MODALS */}
+      {modal && (
+        <div onClick={() => setModal(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: C.chalk, borderRadius: 14, padding: 28, width: "min(540px,95vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,0.25)", border: `3px solid ${C.navy}` }}>
+
+            {modal.type === "saves" && (
+              <SavesModal saveSlots={saveSlots} loadSlot={loadSlot} deleteSlot={deleteSlot}
+                startNewGame={startNewGame} currentSlot={currentSlot}
+                onSaveCurrent={() => { if (currentSlot) saveToSlot(currentSlot); else setModal({ type: "newGame" }); }}
+                onClose={() => setModal(null)} />
+            )}
+
+            {modal.type === "newGame" && (
+              <div>
+                <SectionHead color={C.navy}>Name This Game</SectionHead>
+                <FField label="Game / Session Name" val={newSlotName} set={setNewSlotName} ph="e.g. Game Night Jan 2026…" />
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+                  <Btn onClick={() => setModal(null)} v="ghost">Cancel</Btn>
+                  <Btn onClick={() => { saveToSlot(newSlotName.trim()); setModal(null); setNewSlotName(""); }} v="navy">Save & Continue</Btn>
+                </div>
+              </div>
+            )}
+
+            {(modal.type === "addSport" || modal.type === "editSport") && (
+              <div>
+                <SectionHead color={C.navy}>{modal.type === "editSport" ? "Edit" : "Add"} Sports Question</SectionHead>
+                <FField label="Sport / Category" val={formData.sport || ""} set={v => setFormData({ ...formData, sport: v })} ph="Baseball, NBA, NFL…" />
+                <FField label="Question" val={formData.question || ""} set={v => setFormData({ ...formData, question: v })} ph="The trivia question…" multi />
+                <FField label="Correct Answer" val={formData.answer || ""} set={v => setFormData({ ...formData, answer: v })} ph="Answer…" />
+                <FField label="Notes" val={formData.notes || ""} set={v => setFormData({ ...formData, notes: v })} ph="Difficulty, source, context…" />
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+                  <Btn onClick={() => setModal(null)} v="ghost">Cancel</Btn>
+                  <Btn onClick={saveItem} v="navy">Save Question</Btn>
+                </div>
+              </div>
+            )}
+
+            {(modal.type === "addMusic" || modal.type === "editMusic") && (
+              <div>
+                <SectionHead color={C.red}>{modal.type === "editMusic" ? "Edit" : "Add"} Music</SectionHead>
+                <FField label="Song Title" val={formData.song || ""} set={v => setFormData({ ...formData, song: v })} ph="Song name…" />
+                <FField label="Artist" val={formData.artist || ""} set={v => setFormData({ ...formData, artist: v })} ph="Artist / band name…" />
+                <FField label="Billboard Hot 100 Debut Year" val={formData.year || ""} set={v => setFormData({ ...formData, year: v })} ph="e.g. 1994" />
+                <FField label="Notes" val={formData.notes || ""} set={v => setFormData({ ...formData, notes: v })} ph="Chart peak, context…" />
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+                  <Btn onClick={() => setModal(null)} v="ghost">Cancel</Btn>
+                  <Btn onClick={saveItem} v="red">Save Music</Btn>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -- Saves Modal --
+function SavesModal({ saveSlots, loadSlot, deleteSlot, startNewGame, currentSlot, onSaveCurrent, onClose }) {
+  const [newName, setNewName] = useState("");
+  const slots = Object.values(saveSlots).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+  const fmt = (iso) => {
+    if (!iso) return "—";
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  };
+  return (
+    <div>
+      <SectionHead color={C.navy}>💾 Saved Games</SectionHead>
+      <p style={{ fontSize: 12, color: C.steel, marginBottom: 18, marginTop: -8 }}>Your question bank saves automatically. Game sessions save per slot.</p>
+
+      {currentSlot && (
+        <div style={{ background: C.ltblue, border: `2px solid ${C.navy}`, borderRadius: 8, padding: "12px 14px", marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: C.navy, fontWeight: 800, letterSpacing: 1, marginBottom: 6, textTransform: "uppercase" }}>Current Game</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ color: C.navy, fontSize: 15, fontWeight: 700 }}>{currentSlot}</span>
+            <Btn onClick={onSaveCurrent} v="navy">💾 Save Now</Btn>
+          </div>
+        </div>
+      )}
+
+      <div style={{ background: C.parchment, border: "1px solid #CCC0A8", borderRadius: 8, padding: "12px 14px", marginBottom: 16 }}>
+        <div style={{ fontSize: 11, color: C.brown, fontWeight: 800, letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" }}>Start New Game Session</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && newName.trim() && startNewGame(newName)} placeholder="Game name…" style={{ ...IS, flex: 1 }} />
+          <Btn onClick={() => { if (newName.trim()) startNewGame(newName); }} v="forest">Start</Btn>
+        </div>
+      </div>
+
+      {slots.length === 0 && <div style={{ textAlign: "center", padding: "24px 0", color: C.steel, fontSize: 13, fontWeight: 600 }}>No saved games yet</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {slots.map(s => (
+          <div key={s.name} style={{ background: s.name === currentSlot ? C.ltblue : C.parchment, border: `2px solid ${s.name === currentSlot ? C.navy : "#CCC0A8"}`, borderRadius: 8, padding: "11px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: 14, color: C.navy, fontWeight: 700, marginBottom: 2 }}>
+                {s.name} {s.name === currentSlot && <span style={{ fontSize: 10, color: C.forest, fontWeight: 800, background: C.ltgreen, padding: "1px 6px", borderRadius: 10 }}>ACTIVE</span>}
+              </div>
+              <div style={{ fontSize: 11, color: C.steel }}>
+                {(s.players || []).map(p => p.name).join(", ")} · {fmt(s.savedAt)}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <Btn onClick={() => loadSlot(s.name)} v="ghost">Load</Btn>
+              <Btn onClick={() => deleteSlot(s.name)} v="red-ghost">✕</Btn>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
+        <Btn onClick={onClose} v="ghost">Close</Btn>
+      </div>
+    </div>
+  );
+}
+
+// -- Bank Column --
+function BankCol({ title, color, accent, items, type, onAdd, onEdit, onDelete, onDragStart, borderLeft }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", borderLeft: borderLeft ? `3px solid ${C.parchment}` : "none", background: C.cream }}>
+      <div style={{ padding: "14px 18px 12px", borderBottom: `3px solid ${color}`, background: color, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontWeight: 900, fontSize: 18, color: color === C.navy ? C.gold : C.chalk, letterSpacing: 1 }}>{title}</div>
+          <div style={{ fontSize: 10, color: color === C.navy ? "#A8C8E8" : "#F0C0C8", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" }}>{items.length} items · drag to board</div>
+        </div>
+        <Btn onClick={onAdd} v={type === "sport" ? "gold" : "chalk"}> + Add {type === "sport" ? "Sport Q" : "Music"}</Btn>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 9 }}>
+        {items.length === 0 && <div style={{ textAlign: "center", padding: "48px 0", color: C.steel, fontSize: 13, fontWeight: 600 }}>None yet — click Add to get started</div>}
+        {items.map(item => (
+          <div key={item.id} draggable onDragStart={() => onDragStart(item)} className="hov"
+            style={{ background: C.chalk, border: `2px solid ${color}`, borderLeft: `5px solid ${color}`, borderRadius: 8, padding: "10px 12px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                {type === "sport" ? (
+                  <>
+                    {item.sport && <div style={{ fontSize: 10, color: C.gold, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 3 }}>{item.sport}</div>}
+                    <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.4, marginBottom: 4, fontWeight: 600 }}>{item.question || "—"}</div>
+                    <div style={{ fontSize: 11, color: C.forest, fontWeight: 700 }}>✓ {item.answer || "—"}</div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 13, color: C.ink, marginBottom: 2, fontWeight: 700, fontStyle: "italic" }}>{item.song || "—"}</div>
+                    <div style={{ fontSize: 12, color: C.red, fontWeight: 700 }}>🎤 {item.artist || "—"}</div>
+                    <div style={{ fontSize: 11, color: C.brown, fontWeight: 600 }}>📅 {item.year || "—"}</div>
+                  </>
+                )}
+                {item.notes && <div style={{ fontSize: 10, color: C.steel, marginTop: 4, fontStyle: "italic" }}>{item.notes}</div>}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <SmBtn onClick={() => onEdit(item)}>✏️</SmBtn>
+                <SmBtn onClick={() => onDelete(item.id)} danger>✕</SmBtn>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// -- Quarter Block --
+const QColors = {
+  1: { bg: C.navy,  lt: C.ltblue,  label: "1st Quarter" },
+  2: { bg: C.red,   lt: C.ltred,   label: "2nd Quarter" },
+  3: { bg: C.forest,lt: C.ltgreen, label: "3rd Quarter" },
+  4: { bg: C.gold,  lt: C.ltgold,  label: "4th Quarter" },
+};
+
+function QuarterBlock({ qId, items, players, scores, toggleMark, calcScore, scoreColor, dragRef, dragOver, setDragOver, handleDrop, onRemove }) {
+  const qc = QColors[qId];
+  const isOver = dragOver === `zone_${qId}`;
+  return (
+    <div style={{ background: C.chalk, border: `2px solid ${qc.bg}`, borderRadius: 10, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}>
+      <div style={{ background: qc.bg, padding: "8px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ fontWeight: 900, fontSize: 15, color: qc.bg === C.gold ? C.navy : C.chalk, letterSpacing: 1, textTransform: "uppercase" }}>{qc.label}</div>
+        <div style={{ fontSize: 10, color: qc.bg === C.gold ? C.navy : "rgba(255,255,255,0.7)", background: "rgba(255,255,255,0.15)", padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>{items.length} questions</div>
+      </div>
+      <div onDragOver={e => { e.preventDefault(); setDragOver(`zone_${qId}`); }}
+        onDrop={e => { e.preventDefault(); handleDrop(qId, items.length); setDragOver(null); }}
+        style={{ padding: "10px 12px", minHeight: 60, display: "flex", flexDirection: "column", gap: 8, background: isOver ? qc.lt : C.chalk, transition: "background .15s" }}>
+        {items.length === 0 && <div style={{ textAlign: "center", padding: "14px 0", color: C.steel, fontSize: 12, fontWeight: 600 }}>Drag sports & music cards here from the bank →</div>}
+        {items.map((item, idx) => (
+          <GameCard key={`${item.id}_${idx}`} item={item} idx={idx} qId={qId} qc={qc} players={players} scores={scores}
+            toggleMark={toggleMark} calcScore={calcScore} scoreColor={scoreColor}
+            dragRef={dragRef} dragOver={dragOver} setDragOver={setDragOver} handleDrop={handleDrop} onRemove={() => onRemove(idx)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// -- Game Card --
+function GameCard({ item, idx, qId, qc, players, scores, toggleMark, calcScore, scoreColor, dragRef, dragOver, setDragOver, handleDrop, onRemove }) {
+  const isSport = item.bankType === "sport";
+  const isOver = dragOver === `card_${qId}_${idx}`;
+  const typeColor = isSport ? C.navy : C.red;
+  const typeBg = isSport ? C.ltblue : C.ltred;
+  return (
+    <div draggable
+      onDragStart={() => { dragRef.current = { source: "quarter", item, fromQ: qId, fromIdx: idx }; }}
+      onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDragOver(`card_${qId}_${idx}`); }}
+      onDrop={e => { e.preventDefault(); e.stopPropagation(); handleDrop(qId, idx); }}
+      onDragEnd={() => setDragOver(null)}
+      style={{ background: isOver ? C.parchment : C.chalk, border: `2px solid ${isOver ? qc.bg : "#DDD5C0"}`, borderLeft: `5px solid ${typeColor}`, borderRadius: 8, cursor: "grab", transition: "background .12s", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "5px 10px", borderBottom: `1px solid ${C.parchment}`, background: typeBg }}>
+        <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: typeColor, letterSpacing: 0.5, textTransform: "uppercase" }}>{isSport ? "🏆 Sport" : "🎵 Music"}</span>
+          <span style={{ fontSize: 10, color: C.steel, fontWeight: 600 }}>#{idx + 1}</span>
+        </div>
+        <button onClick={onRemove} className="hov" style={{ background: "none", border: "none", color: C.steel, cursor: "pointer", fontSize: 12, padding: "1px 4px", fontWeight: 700 }}>✕</button>
+      </div>
+      <div style={{ padding: "8px 10px" }}>
+        {isSport ? (
+          <>
+            {item.sport && <div style={{ fontSize: 9, color: C.gold, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 2 }}>{item.sport}</div>}
+            <div style={{ fontSize: 12, color: C.ink, lineHeight: 1.4, marginBottom: 2, fontWeight: 600 }}>{item.question || "—"}</div>
+            <div style={{ fontSize: 11, color: C.forest, fontWeight: 700 }}>✓ {item.answer || "—"}</div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: C.ink, fontWeight: 700, fontStyle: "italic", marginBottom: 1 }}>{item.song || "—"}</div>
+            <div style={{ fontSize: 11, color: C.red, fontWeight: 700 }}>🎤 {item.artist || "—"}</div>
+            <div style={{ fontSize: 11, color: C.brown, fontWeight: 600 }}>📅 {item.year || "—"}</div>
+          </>
+        )}
+      </div>
+      {players.length > 0 && (
+        <div style={{ borderTop: `1px solid ${C.parchment}`, padding: "6px 10px", display: "flex", flexDirection: "column", gap: 5, background: "#FAFAF6" }}>
+          {players.map(p => {
+            const key = `${qId}_${idx}`;
+            const m = (scores[p.id] || {})[key] || {};
+            const pts = calcScore(m);
+            return (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ width: 64, fontSize: 10, color: p.color, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0 }}>{p.name}</div>
+                {isSport ? (
+                  <MkBtn active={m.sport} color={C.navy} onClick={() => toggleMark(p.id, qId, idx, "sport")} label="Sport" />
+                ) : (
+                  <>
+                    <MkBtn active={m.artist} color={C.red} onClick={() => toggleMark(p.id, qId, idx, "artist")} label="Artist" />
+                    <YrBtn marks={m} onClick={() => toggleMark(p.id, qId, idx, "year")} />
+                  </>
+                )}
+                <div style={{ marginLeft: "auto", fontSize: 11, fontWeight: 900, color: scoreColor(pts), minWidth: 18, textAlign: "right" }}>
+                  {pts > 0 ? (pts === 4 ? "★" : pts) : ""}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -- Scoreboard --
+function Scoreboard({ players, getTotal, totalPoss, scores, quarters, calcScore }) {
+  const sorted = [...players].sort((a, b) => getTotal(b.id) - getTotal(a.id));
+  return (
+    <div style={{ padding: 14, borderBottom: `2px solid ${C.parchment}`, background: C.cream }}>
+      <div style={{ fontWeight: 900, fontSize: 14, color: C.navy, letterSpacing: 2, marginBottom: 12, textTransform: "uppercase", borderBottom: `2px solid ${C.navy}`, paddingBottom: 6 }}>Scoreboard</div>
+      {sorted.map((p, i) => {
+        const t = getTotal(p.id);
+        const pct = totalPoss > 0 ? (t / totalPoss) * 100 : 0;
+        return (
+          <div key={p.id} style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+              <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                {i === 0 && players.length > 1 && <span style={{ fontSize: 11 }}>🥇</span>}
+                <span style={{ fontSize: 13, color: p.color, fontWeight: 800 }}>{p.name}</span>
+              </div>
+              <span style={{ fontWeight: 900, fontSize: 18, color: p.color }}>{t}</span>
+            </div>
+            <div style={{ height: 5, background: C.parchment, borderRadius: 3 }}>
+              <div style={{ height: "100%", width: `${pct}%`, background: p.color, borderRadius: 3, transition: "width .4s" }} />
+            </div>
+          </div>
+        );
+      })}
+      {players.length === 0 && <div style={{ fontSize: 12, color: C.steel, fontWeight: 600 }}>Add players in Setup tab</div>}
+      {players.length > 0 && [1,2,3,4].some(q => quarters[q].length > 0) && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: C.steel, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>By Quarter</div>
+          {[1,2,3,4].map(qId => {
+            if (quarters[qId].length === 0) return null;
+            const qc = QColors[qId];
+            return (
+              <div key={qId} style={{ marginBottom: 5, display: "flex", gap: 6, alignItems: "center" }}>
+                <div style={{ fontSize: 9, fontWeight: 800, color: qc.bg === C.gold ? C.brown : qc.bg, background: qc.lt, padding: "2px 6px", borderRadius: 4, minWidth: 22, textAlign: "center" }}>Q{qId}</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {players.map(p => {
+                    const qs = quarters[qId].reduce((s, _, idx) => s + calcScore((scores[p.id] || {})[`${qId}_${idx}`] || {}), 0);
+                    return <div key={p.id} style={{ fontSize: 10, color: p.color, fontWeight: 700 }}>{p.name.split(" ")[0]}: {qs}</div>;
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -- Mini Bank --
+function MiniBank({ label, color, bg, items, onDragStart }) {
+  return (
+    <div style={{ padding: "12px 13px", borderBottom: `2px solid ${C.parchment}` }}>
+      <div style={{ fontSize: 11, color, fontWeight: 800, letterSpacing: 0.5, marginBottom: 7 }}>{label} ({items.length}) — drag to board</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        {items.slice(0, 5).map(item => (
+          <div key={item.id} draggable onDragStart={() => onDragStart(item)} className="hov"
+            style={{ background: bg, border: `1px solid ${color}`, borderRadius: 5, padding: "5px 9px", cursor: "grab", fontSize: 10, color: C.ink, fontWeight: 600, lineHeight: 1.3 }}>
+            {label.includes("Sport") ? (item.question?.slice(0, 44) || "…") : `${item.artist || "?"} — ${item.song?.slice(0, 24) || "?"}`}
+          </div>
+        ))}
+        {items.length === 0 && <div style={{ fontSize: 11, color: C.steel, fontWeight: 600 }}>None — add in Bank tab</div>}
+        {items.length > 5 && <div style={{ fontSize: 10, color: C.steel, fontWeight: 600 }}>+{items.length - 5} more in Bank tab</div>}
+      </div>
+    </div>
+  );
+}
+
+// -- Shared --
+function MkBtn({ active, color, onClick, label }) {
+  return (
+    <button onClick={onClick} style={{ background: active ? color : C.parchment, border: `2px solid ${color}`, color: active ? C.chalk : color, borderRadius: 4, padding: "2px 7px", cursor: "pointer", fontSize: 9, fontWeight: 800, fontFamily: "'Nunito',sans-serif", transition: "all .1s" }}>
+      {active ? "✓" : "○"} {label}
+    </button>
+  );
+}
+
+function YrBtn({ marks, onClick }) {
+  const { yearClose, yearExact } = marks;
+  const [label, bg, border, color] =
+    yearExact ? ["EXACT ★", C.gold, C.gold, C.navy] :
+    yearClose ? ["± 1 YR", C.forest, C.forest, C.chalk] :
+    ["Year", C.parchment, C.steel, C.steel];
+  return (
+    <button onClick={onClick} style={{ background: bg, border: `2px solid ${border}`, color, borderRadius: 4, padding: "2px 7px", cursor: "pointer", fontSize: 9, fontWeight: 800, fontFamily: "'Nunito',sans-serif", transition: "all .1s" }}>
+      {label}
+    </button>
+  );
+}
+
+function Btn({ onClick, children, v = "ghost", lg }) {
+  const vs = {
+    navy:       { background: C.navy, color: C.gold, border: `2px solid ${C.navy}` },
+    red:        { background: C.red, color: C.chalk, border: `2px solid ${C.red}` },
+    forest:     { background: C.forest, color: C.chalk, border: `2px solid ${C.forest}` },
+    gold:       { background: C.gold, color: C.navy, border: `2px solid ${C.gold}` },
+    chalk:      { background: C.chalk, color: C.navy, border: `2px solid ${C.chalk}` },
+    ghost:      { background: "transparent", color: C.steel, border: "2px solid #CCC0A8" },
+    "red-ghost":{ background: "transparent", color: C.red, border: `2px solid ${C.red}` },
+  };
+  return (
+    <button onClick={onClick} className="hov" style={{ ...vs[v], borderRadius: 7, padding: lg ? "11px 26px" : "6px 14px", cursor: "pointer", fontSize: lg ? 14 : 11, fontWeight: 800, fontFamily: "'Nunito',sans-serif", letterSpacing: 0.5 }}>
+      {children}
+    </button>
+  );
+}
+
+function SmBtn({ onClick, children, danger }) {
+  return (
+    <button onClick={onClick} className="hov" style={{ background: danger ? C.ltred : C.parchment, border: `2px solid ${danger ? C.red : "#CCC0A8"}`, color: danger ? C.red : C.steel, borderRadius: 5, width: 26, height: 26, cursor: "pointer", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>
+      {children}
+    </button>
+  );
+}
+
+function FField({ label, val, set, ph, multi }) {
+  return (
+    <div style={{ marginBottom: 13 }}>
+      <label style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1, color: C.steel, textTransform: "uppercase", display: "block", marginBottom: 4 }}>{label}</label>
+      {multi
+        ? <textarea value={val} onChange={e => set(e.target.value)} placeholder={ph} rows={3} style={{ ...IS, resize: "vertical", width: "100%" }} />
+        : <input value={val} onChange={e => set(e.target.value)} placeholder={ph} style={{ ...IS, width: "100%" }} />
+      }
+    </div>
+  );
+}
+
+function SectionHead({ children, color }) {
+  return (
+    <div style={{ fontWeight: 900, fontSize: 20, color, marginBottom: 16, paddingBottom: 8, borderBottom: `3px solid ${color}`, letterSpacing: 0.5 }}>{children}</div>
+  );
+}
+
+const IS = { background: C.chalk, border: "2px solid #CCC0A8", borderRadius: 6, padding: "8px 11px", color: C.ink, fontSize: 13, fontWeight: 600 };
