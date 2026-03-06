@@ -222,6 +222,18 @@ export default function App() {
     setMusicBank(b => [...b, { ...track, id: uid() }]);
   };
 
+  const sendToQuarter = (item, bankType, qId) => {
+    setQuarters(prev => ({
+      ...prev,
+      [qId]: [...prev[qId], { ...item, bankType }],
+    }));
+  };
+
+  // IDs of items already placed on the game board
+  const placedIds = new Set(
+    [1,2,3,4].flatMap(q => quarters[q]).map(item => item.id)
+  );
+
   const handleDrop = (toQ, toIdx) => {
     if (!dragRef.current) return;
     const { source, item, fromQ, fromIdx } = dragRef.current;
@@ -368,13 +380,13 @@ export default function App() {
             onEdit={item => { setFormData({ ...item }); setModal({ type: "editSport" }); }}
             onDelete={id => setSportsBank(b => b.filter(x => x.id !== id))}
             onDragStart={item => { dragRef.current = { source: "sport", item }; }}
-            audio={audio} />
+            audio={audio} onSendToQuarter={sendToQuarter} placedIds={placedIds} />
           <BankCol title="🎵 Music" color={C.red} accent={C.ltred} items={musicBank} type="music"
             onAdd={() => { setFormData({}); setModal({ type: "addMusic" }); }}
             onEdit={item => { setFormData({ ...item }); setModal({ type: "editMusic" }); }}
             onDelete={id => setMusicBank(b => b.filter(x => x.id !== id))}
             onDragStart={item => { dragRef.current = { source: "music", item }; }}
-            borderLeft audio={audio} />
+            borderLeft audio={audio} onSendToQuarter={sendToQuarter} placedIds={placedIds} />
         </div>
       )}
 
@@ -394,8 +406,8 @@ export default function App() {
           </div>
           <div style={{ width: 270, borderLeft: `3px solid ${C.parchment}`, background: C.cream, overflowY: "auto" }}>
             <Scoreboard players={players} getTotal={getTotal} totalPoss={totalPoss} scores={scores} quarters={quarters} calcScore={calcScore} />
-            <MiniBank label="🏆 Sports" color={C.navy} bg={C.ltblue} items={sportsBank} onDragStart={item => { dragRef.current = { source: "sport", item }; }} audio={audio} />
-            <MiniBank label="🎵 Music" color={C.red} bg={C.ltred} items={musicBank} onDragStart={item => { dragRef.current = { source: "music", item }; }} audio={audio} />
+            <MiniBank label="🏆 Sports" color={C.navy} bg={C.ltblue} items={sportsBank} placedIds={placedIds} onDragStart={item => { dragRef.current = { source: "sport", item }; }} audio={audio} onSendToQuarter={sendToQuarter} bankType="sport" />
+            <MiniBank label="🎵 Music" color={C.red} bg={C.ltred} items={musicBank} placedIds={placedIds} onDragStart={item => { dragRef.current = { source: "music", item }; }} audio={audio} onSendToQuarter={sendToQuarter} bankType="music" />
           </div>
         </div>
       )}
@@ -668,55 +680,85 @@ function SavesModal({ saveSlots, loadSlot, deleteSlot, startNewGame, currentSlot
 }
 
 // -- Bank Column --
-function BankCol({ title, color, accent, items, type, onAdd, onEdit, onDelete, onDragStart, borderLeft, audio }) {
+function BankCol({ title, color, accent, items, type, onAdd, onEdit, onDelete, onDragStart, borderLeft, audio, onSendToQuarter, placedIds }) {
+  const bankType = type === "sport" ? "sport" : "music";
   return (
     <div style={{ display: "flex", flexDirection: "column", borderLeft: borderLeft ? `3px solid ${C.parchment}` : "none", background: C.cream }}>
       <div style={{ padding: "14px 18px 12px", borderBottom: `3px solid ${color}`, background: color, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontWeight: 900, fontSize: 18, color: color === C.navy ? C.gold : C.chalk, letterSpacing: 1 }}>{title}</div>
-          <div style={{ fontSize: 10, color: color === C.navy ? "#A8C8E8" : "#F0C0C8", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" }}>{items.length} items · drag to board</div>
+          <div style={{ fontSize: 10, color: color === C.navy ? "#A8C8E8" : "#F0C0C8", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" }}>{items.length} items · drag to board or send to quarter</div>
         </div>
         <Btn onClick={onAdd} v={type === "sport" ? "gold" : "chalk"}> + Add {type === "sport" ? "Sport Q" : "Music"}</Btn>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 9 }}>
         {items.length === 0 && <div style={{ textAlign: "center", padding: "48px 0", color: C.steel, fontSize: 13, fontWeight: 600 }}>None yet — click Add to get started</div>}
-        {items.map(item => (
-          <div key={item.id} draggable onDragStart={() => onDragStart(item)} className="hov"
-            style={{ background: C.chalk, border: `2px solid ${color}`, borderLeft: `5px solid ${color}`, borderRadius: 8, padding: "10px 12px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <div style={{ display: "flex", gap: 10, flex: 1, minWidth: 0 }}>
-                {type === "music" && item.artworkSmall && (
-                  <img src={item.artworkSmall} alt="" style={{ width: 42, height: 42, borderRadius: 5, objectFit: "cover", flexShrink: 0 }} />
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {type === "sport" ? (
-                    <>
-                      {item.sport && <div style={{ fontSize: 10, color: C.gold, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 3 }}>{item.sport}</div>}
-                      <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.4, marginBottom: 4, fontWeight: 600 }}>{item.question || "—"}</div>
-                      <div style={{ fontSize: 11, color: C.forest, fontWeight: 700 }}>✓ {item.answer || "—"}</div>
-                    </>
-                  ) : (
-                    <>
-                      <div style={{ fontSize: 13, color: C.ink, marginBottom: 2, fontWeight: 700, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.song || "—"}</div>
-                      <div style={{ fontSize: 12, color: C.red, fontWeight: 700 }}>🎤 {item.artist || "—"}</div>
-                      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
-                        <span style={{ fontSize: 11, color: C.brown, fontWeight: 600 }}>📅 {item.year || "—"}</span>
-                        <PreviewBtn url={item.previewUrl} audio={audio} size={20} />
-                        <AppleMusicLink url={item.appleMusicUrl} small />
-                      </div>
-                    </>
+        {items.map(item => {
+          const isPlaced = placedIds && placedIds.has(item.id);
+          return (
+            <div key={item.id} draggable onDragStart={() => onDragStart(item)} className="hov"
+              style={{ background: isPlaced ? C.ltgreen : C.chalk, border: `2px solid ${color}`, borderLeft: `5px solid ${color}`, borderRadius: 8, padding: "10px 12px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", opacity: isPlaced ? 0.6 : 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ display: "flex", gap: 10, flex: 1, minWidth: 0 }}>
+                  {type === "music" && item.artworkSmall && (
+                    <img src={item.artworkSmall} alt="" style={{ width: 42, height: 42, borderRadius: 5, objectFit: "cover", flexShrink: 0 }} />
                   )}
-                  {item.notes && <div style={{ fontSize: 10, color: C.steel, marginTop: 4, fontStyle: "italic" }}>{item.notes}</div>}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {type === "sport" ? (
+                      <>
+                        {item.sport && <div style={{ fontSize: 10, color: C.gold, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", marginBottom: 3 }}>{item.sport}</div>}
+                        <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.4, marginBottom: 4, fontWeight: 600 }}>{item.question || "—"}</div>
+                        <div style={{ fontSize: 11, color: C.forest, fontWeight: 700 }}>✓ {item.answer || "—"}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 13, color: C.ink, marginBottom: 2, fontWeight: 700, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.song || "—"}</div>
+                        <div style={{ fontSize: 12, color: C.red, fontWeight: 700 }}>🎤 {item.artist || "—"}</div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
+                          <span style={{ fontSize: 11, color: C.brown, fontWeight: 600 }}>📅 {item.year || "—"}</span>
+                          <PreviewBtn url={item.previewUrl} audio={audio} size={20} />
+                          <AppleMusicLink url={item.appleMusicUrl} small />
+                        </div>
+                      </>
+                    )}
+                    {item.notes && <div style={{ fontSize: 10, color: C.steel, marginTop: 4, fontStyle: "italic" }}>{item.notes}</div>}
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <SmBtn onClick={() => onEdit(item)}>✏️</SmBtn>
+                    <SmBtn onClick={() => onDelete(item.id)} danger>✕</SmBtn>
+                  </div>
+                  {onSendToQuarter && !isPlaced && (
+                    <QuarterPicker onSelect={(qId) => onSendToQuarter(item, bankType, qId)} />
+                  )}
+                  {isPlaced && <div style={{ fontSize: 9, color: C.forest, fontWeight: 800, letterSpacing: 0.5 }}>ON BOARD</div>}
                 </div>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <SmBtn onClick={() => onEdit(item)}>✏️</SmBtn>
-                <SmBtn onClick={() => onDelete(item.id)} danger>✕</SmBtn>
-              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+    </div>
+  );
+}
+
+// -- Quarter Picker (send to Q1-Q4 buttons) --
+function QuarterPicker({ onSelect }) {
+  return (
+    <div style={{ display: "flex", gap: 3 }}>
+      {[1,2,3,4].map(qId => {
+        const qc = QColors[qId];
+        return (
+          <button key={qId} onClick={() => onSelect(qId)} className="hov" style={{
+            background: qc.bg, color: qc.bg === C.gold ? C.navy : C.chalk,
+            border: "none", borderRadius: 4, padding: "2px 6px", cursor: "pointer",
+            fontSize: 9, fontWeight: 800, fontFamily: "'Nunito',sans-serif",
+          }}>
+            Q{qId}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -875,12 +917,29 @@ function Scoreboard({ players, getTotal, totalPoss, scores, quarters, calcScore 
 }
 
 // -- Mini Bank --
-function MiniBank({ label, color, bg, items, onDragStart, audio }) {
+function MiniBank({ label, color, bg, items, onDragStart, audio, placedIds, onSendToQuarter, bankType }) {
+  const [expanded, setExpanded] = useState(false);
+  const available = items.filter(item => !placedIds || !placedIds.has(item.id));
+  const display = expanded ? available : available.slice(0, 5);
+  const hasMore = available.length > 5;
+
   return (
     <div style={{ padding: "12px 13px", borderBottom: `2px solid ${C.parchment}` }}>
-      <div style={{ fontSize: 11, color, fontWeight: 800, letterSpacing: 0.5, marginBottom: 7 }}>{label} ({items.length}) — drag to board</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        {items.slice(0, 5).map(item => (
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+        <div style={{ fontSize: 11, color, fontWeight: 800, letterSpacing: 0.5 }}>
+          {label} ({available.length}/{items.length}) — drag or send to board
+        </div>
+        {hasMore && (
+          <button onClick={() => setExpanded(!expanded)} className="hov" style={{
+            background: "transparent", border: `1px solid ${color}`, color, borderRadius: 4,
+            padding: "1px 7px", cursor: "pointer", fontSize: 9, fontWeight: 800, fontFamily: "'Nunito',sans-serif",
+          }}>
+            {expanded ? "Collapse" : `Show All (${available.length})`}
+          </button>
+        )}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: expanded ? 400 : "none", overflowY: expanded ? "auto" : "visible" }}>
+        {display.map(item => (
           <div key={item.id} draggable onDragStart={() => onDragStart(item)} className="hov"
             style={{ background: bg, border: `1px solid ${color}`, borderRadius: 5, padding: "5px 9px", cursor: "grab", fontSize: 10, color: C.ink, fontWeight: 600, lineHeight: 1.3, display: "flex", alignItems: "center", gap: 6 }}>
             {label.includes("Music") && item.artworkSmall && (
@@ -890,10 +949,13 @@ function MiniBank({ label, color, bg, items, onDragStart, audio }) {
               {label.includes("Sport") ? (item.question?.slice(0, 44) || "…") : `${item.artist || "?"} — ${item.song?.slice(0, 24) || "?"}`}
             </span>
             {label.includes("Music") && item.previewUrl && <PreviewBtn url={item.previewUrl} audio={audio} size={18} />}
+            {onSendToQuarter && (
+              <QuarterPicker onSelect={(qId) => onSendToQuarter(item, bankType, qId)} />
+            )}
           </div>
         ))}
+        {available.length === 0 && items.length > 0 && <div style={{ fontSize: 11, color: C.steel, fontWeight: 600 }}>All items placed on the board</div>}
         {items.length === 0 && <div style={{ fontSize: 11, color: C.steel, fontWeight: 600 }}>None — add in Bank tab</div>}
-        {items.length > 5 && <div style={{ fontSize: 10, color: C.steel, fontWeight: 600 }}>+{items.length - 5} more in Bank tab</div>}
       </div>
     </div>
   );
