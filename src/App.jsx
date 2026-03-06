@@ -880,9 +880,9 @@ function GameCard({ item, idx, qId, qc, players, scores, toggleMark, calcScore, 
                   <>
                     <MkBtn active={m.artist} color={C.red} onClick={() => toggleMark(p.id, qId, idx, "artist")} label="Artist" />
                     <YrBtn marks={m} onClick={() => toggleMark(p.id, qId, idx, "year")} />
+                    <MkBtn active={m.grandSlam} color={C.gold} onClick={() => toggleMark(p.id, qId, idx, "grandSlam")} label="GS" />
                   </>
                 )}
-                <MkBtn active={m.grandSlam} color={C.gold} onClick={() => toggleMark(p.id, qId, idx, "grandSlam")} label="GS" />
                 <div style={{ marginLeft: "auto", fontSize: 11, fontWeight: 900, color: scoreColor(pts), minWidth: 18, textAlign: "right" }}>
                   {pts > 0 ? (pts >= 5 ? "★+" : pts === 4 ? "★" : pts) : ""}
                 </div>
