@@ -28,12 +28,12 @@ const SAVES_KEY = "srs_saves_v1";
 
 const calcScore = (marks) => {
   if (!marks) return 0;
-  const { sport, artist, yearExact, yearClose } = marks;
+  const { sport, artist, yearExact, yearClose, grandSlam } = marks;
   const pts = (sport?1:0)+(artist?1:0)+(yearExact?1:yearClose?1:0);
-  return pts + (sport&&artist&&yearExact?1:0);
+  return pts + (sport&&artist&&yearExact?1:0) + (grandSlam?1:0);
 };
 
-const scoreColor = (s) => s===4?C.gold:s===3?C.forest:s===2?C.navy:s===1?C.steel:C.parchment;
+const scoreColor = (s) => s>=5?C.gold:s===4?C.gold:s===3?C.forest:s===2?C.navy:s===1?C.steel:C.parchment;
 
 function storageGet(key) {
   try {
@@ -270,7 +270,7 @@ export default function App() {
   };
 
   const getTotal = (pid) => Object.values(scores[pid] || {}).reduce((s, m) => s + calcScore(m), 0);
-  const totalPoss = [1,2,3,4].flatMap(q => quarters[q]).length * 4;
+  const totalPoss = [1,2,3,4].flatMap(q => quarters[q]).length * 5;
   const slotCount = Object.keys(saveSlots).length;
 
   return (
@@ -882,8 +882,9 @@ function GameCard({ item, idx, qId, qc, players, scores, toggleMark, calcScore, 
                     <YrBtn marks={m} onClick={() => toggleMark(p.id, qId, idx, "year")} />
                   </>
                 )}
+                <MkBtn active={m.grandSlam} color={C.gold} onClick={() => toggleMark(p.id, qId, idx, "grandSlam")} label="GS" />
                 <div style={{ marginLeft: "auto", fontSize: 11, fontWeight: 900, color: scoreColor(pts), minWidth: 18, textAlign: "right" }}>
-                  {pts > 0 ? (pts === 4 ? "★" : pts) : ""}
+                  {pts > 0 ? (pts >= 5 ? "★+" : pts === 4 ? "★" : pts) : ""}
                 </div>
               </div>
             );
