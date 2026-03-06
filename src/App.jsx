@@ -130,6 +130,7 @@ export default function App() {
   const [currentSlot, setCurrentSlot] = useState(null);
   const [storageReady, setStorageReady] = useState(false);
   const [newSlotName, setNewSlotName] = useState("");
+  const [activeQ, setActiveQ] = useState(1);
   const autoSaveTimer = useRef(null);
   const audio = useAudioPlayer();
 
@@ -227,6 +228,7 @@ export default function App() {
       ...prev,
       [qId]: [...prev[qId], { ...item, bankType }],
     }));
+    if (view === "game") setActiveQ(qId);
   };
 
   // IDs of items already placed on the game board
@@ -393,16 +395,41 @@ export default function App() {
       {/* GAME */}
       {view === "game" && (
         <div style={{ display: "flex", height: "calc(100vh - 58px)" }}>
-          <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
-            {[1,2,3,4].map(qId => (
-              <QuarterBlock key={qId} qId={qId} items={quarters[qId]} players={players} scores={scores}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            {/* Quarter Tabs */}
+            <div style={{ display: "flex", gap: 0, background: C.parchment, borderBottom: `3px solid ${C.parchment}` }}>
+              {[1,2,3,4].map(qId => {
+                const qc = QColors[qId];
+                const active = activeQ === qId;
+                return (
+                  <button key={qId} onClick={() => setActiveQ(qId)} className="hov" style={{
+                    flex: 1, padding: "10px 8px", border: "none", cursor: "pointer",
+                    background: active ? qc.bg : C.cream,
+                    color: active ? (qc.bg === C.gold ? C.navy : C.chalk) : qc.bg,
+                    fontWeight: 900, fontSize: 13, letterSpacing: 1, textTransform: "uppercase",
+                    borderBottom: active ? `3px solid ${qc.bg}` : "3px solid transparent",
+                    fontFamily: "inherit", transition: "all .15s",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  }}>
+                    {qc.label}
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 20,
+                      background: active ? "rgba(255,255,255,0.2)" : qc.lt, color: active ? (qc.bg === C.gold ? C.navy : C.chalk) : qc.bg,
+                    }}>{quarters[qId].length}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Active Quarter Content */}
+            <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+              <QuarterBlock key={activeQ} qId={activeQ} items={quarters[activeQ]} players={players} scores={scores}
                 toggleMark={toggleMark} calcScore={calcScore} scoreColor={scoreColor}
                 dragRef={dragRef} dragOver={dragOver} setDragOver={setDragOver} handleDrop={handleDrop}
                 audio={audio}
                 onRemove={idx => {
-                  setQuarters(prev => { const n = { ...prev, [qId]: [...prev[qId]] }; n[qId].splice(idx, 1); return n; });
+                  setQuarters(prev => { const n = { ...prev, [activeQ]: [...prev[activeQ]] }; n[activeQ].splice(idx, 1); return n; });
                 }} />
-            ))}
+            </div>
           </div>
           <div style={{ width: 270, borderLeft: `3px solid ${C.parchment}`, background: C.cream, overflowY: "auto" }}>
             <Scoreboard players={players} getTotal={getTotal} totalPoss={totalPoss} scores={scores} quarters={quarters} calcScore={calcScore} />
