@@ -156,18 +156,22 @@ export default function App() {
     setSaveStatus("saving");
     autoSaveTimer.current = setTimeout(() => {
       const gameState = { players, quarters, scores, name: currentSlot, savedAt: new Date().toISOString() };
-      const updated = { ...saveSlots, [currentSlot]: gameState };
+      // Read fresh from localStorage to avoid stale closure
+      const freshSaves = storageGet(SAVES_KEY) || {};
+      const updated = { ...freshSaves, [currentSlot]: gameState };
       setSaveSlots(updated);
       storageSet(SAVES_KEY, updated);
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus(""), 2500);
     }, 1200);
-  }, [players, quarters, scores]);
+  }, [players, quarters, scores, currentSlot, storageReady]);
 
   const saveToSlot = (name) => {
     setSaveStatus("saving");
     const gameState = { players, quarters, scores, name, savedAt: new Date().toISOString() };
-    const updated = { ...saveSlots, [name]: gameState };
+    // Read fresh from localStorage to avoid stale closure
+    const freshSaves = storageGet(SAVES_KEY) || {};
+    const updated = { ...freshSaves, [name]: gameState };
     setSaveSlots(updated);
     storageSet(SAVES_KEY, updated);
     setCurrentSlot(name);
@@ -176,11 +180,14 @@ export default function App() {
   };
 
   const loadSlot = (name) => {
-    const s = saveSlots[name];
+    // Read directly from localStorage to avoid stale closure issues
+    const freshSaves = storageGet(SAVES_KEY) || {};
+    const s = freshSaves[name];
     if (!s) return;
     setPlayers(s.players || []);
     setQuarters(s.quarters || {1:[],2:[],3:[],4:[]});
     setScores(s.scores || {});
+    setSaveSlots(freshSaves);
     setCurrentSlot(name);
     setModal(null);
     setView("game");
