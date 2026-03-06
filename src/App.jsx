@@ -627,8 +627,9 @@ function MusicSearchModal({ onAdd, onClose, audio }) {
 // -- Apple Music Link Button --
 function AppleMusicLink({ url, small }) {
   if (!url) return null;
+  const appUrl = url.replace(/^https:\/\//, "music://");
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer" className="hov" style={{
+    <a href={appUrl} className="hov" style={{
       display: "inline-flex", alignItems: "center", gap: 3,
       background: "#FC3C44", color: C.chalk, borderRadius: small ? 4 : 5,
       padding: small ? "2px 7px" : "3px 9px", textDecoration: "none",
